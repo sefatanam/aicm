@@ -197,3 +197,57 @@ func TestProviderSelection(t *testing.T) {
 		t.Errorf("aicm.provider=nope: want error, got %v: %s", err, out)
 	}
 }
+
+func TestTemplateWithoutTicket(t *testing.T) {
+	e := setup(t)
+	e.stage("a.go", "package a\n")
+	e.git("config", "aicm.format", "[web] {message}")
+	out, err := e.aicm("feat(auth): add login\n===\nAdd login\n")
+	if err != nil || out != "[web] feat(auth): add login" {
+		t.Errorf("plain template on main: %v: %q", err, out)
+	}
+	if log, _ := os.ReadFile(e.argsLog); !strings.Contains(string(log), "TWO") {
+		t.Error("an applied template should ask for two variants")
+	}
+
+	out, _ = e.aicm("feat(auth): add login\n===\nAdd login\n", "-t", "AXE-9")
+	if !strings.Contains(out, "warning") || !strings.HasSuffix(out, "[web] feat(auth): add login") {
+		t.Errorf("-t with a template lacking {ticket} should warn: %q", out)
+	}
+
+	e.git("config", "aicm.format", "[web]")
+	if out, err := e.aicm("feat: x"); err == nil || !strings.Contains(out, "{message}") {
+		t.Errorf("template without {message}: want error, got %v: %q", err, out)
+	}
+}
+
+func TestTicketTemplateFallsBackWithoutTicket(t *testing.T) {
+	e := setup(t)
+	e.stage("a.go", "package a\n")
+	e.git("config", "aicm.format", "{ticket} | {message}")
+	out, err := e.aicm("feat(auth): add login\n===\nAdd login\n")
+	if err != nil || out != "feat(auth): add login" {
+		t.Errorf("no ticket: want plain conventional commit, got %v: %q", err, out)
+	}
+	if log, _ := os.ReadFile(e.argsLog); strings.Contains(string(log), "TWO") {
+		t.Error("no template applied, so only one message should be requested")
+	}
+
+	e.git("checkout", "-q", "-b", "feature/AXE-123-login")
+	if out, _ := e.aicm("feat(auth): add login\n===\nAdd login\n"); out != "AXE-123 | feat(auth): add login" {
+		t.Errorf("ticket branch: %q", out)
+	}
+}
+
+func TestStylePrompt(t *testing.T) {
+	e := setup(t)
+	e.stage("a.go", "package a\n")
+	e.git("config", "aicm.prompt", "Use gitmoji.\nOne line only.")
+	if out, err := e.aicm("✨ add login"); err != nil || out != "✨ add login" {
+		t.Fatalf("%v: %q", err, out)
+	}
+	log, _ := os.ReadFile(e.argsLog)
+	if !strings.Contains(string(log), "Use gitmoji.") || strings.Contains(string(log), "Conventional Commits") {
+		t.Errorf("aicm.prompt should replace the default style; claude args:\n%s", log)
+	}
+}

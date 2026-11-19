@@ -60,7 +60,16 @@ $ aicm
 Pick a message [1-2] (default 1):
 ```
 
-With no ticket, aicm writes a plain [Conventional Commits](https://www.conventionalcommits.org) message (`feat`, `fix`, `chore`, `refactor`, …).
+How the subject is shaped:
+
+| Ticket found? | `aicm.format` | Result |
+|---|---|---|
+| yes | unset | `AXE-123: feat(auth): …` (default `{ticket}: {message}`) |
+| yes | `[{ticket}] {message}` | `[AXE-123] feat(auth): …` |
+| no | unset, or mentions `{ticket}` | plain [Conventional Commits](https://www.conventionalcommits.org): `feat(auth): …` |
+| either | `[web] {message}` (no `{ticket}`) | `[web] feat(auth): …` |
+
+Whenever a format is applied, aicm offers two versions to pick from: with and without the Conventional Commits type.
 
 ## Configuration
 
@@ -70,15 +79,31 @@ Settings use `git config`: set them once with `--global`, or per repo without it
 |---|---|---|
 | `aicm.provider` | `claude` | AI provider (currently `claude`) |
 | `aicm.model` | provider default (`haiku` for Claude) | Model name (for Claude: `haiku`, `sonnet`, `opus`, or a full model ID) |
-| `aicm.format` | `{ticket}: {message}` | Subject template used when there is a ticket |
+| `aicm.format` | `{ticket}: {message}` when there is a ticket | Subject template. Must contain `{message}`; one that contains `{ticket}` is only used when a ticket is found |
 | `aicm.ticketPattern` | `[A-Z][A-Z0-9]+-\d+` | Regex that finds the ticket in the branch name |
-| `aicm.rules` | — | Extra style instructions for the model |
+| `aicm.prompt` | Conventional Commits | Replaces the built-in style instructions. aicm still keeps the output to just the message and adds tickets itself |
+| `aicm.rules` | — | Extra style instructions, applied on top of the style and taking priority |
 
 ```sh
 git config --global aicm.model sonnet
 git config aicm.format "[{ticket}] {message}"            # [AXE-123] feat: ...
+git config aicm.format "[web] {message}"                 # every commit: [web] feat: ...
 git config aicm.rules "no type prefix, max 50 chars"
+git config --global aicm.prompt $'Use gitmoji.\nOne line, at most 50 characters.'
 ```
+
+Longer prompts are easiest to write with `git config --global --edit`.
+
+### Team setup
+
+Repo-level `git config` isn't committed, so share your convention as a block each teammate runs once:
+
+```sh
+git config aicm.format "{ticket}: {message}"
+git config aicm.rules "lowercase subject, max 72 chars"
+```
+
+Or commit a file with an `[aicm]` section (e.g. `.aicmconfig`) and have each teammate include it once: `git config include.path ../.aicmconfig`.
 
 ## Development
 

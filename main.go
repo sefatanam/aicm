@@ -36,8 +36,10 @@ Flags:
 Config (git config [--global] <key> <value>):
   aicm.provider       AI provider (default claude)
   aicm.model          model to use (default depends on the provider; claude: haiku)
-  aicm.format         template when a ticket is found (default "{ticket}: {message}")
+  aicm.format         subject template; with {ticket} only used when a ticket is found
+                      (default "{ticket}: {message}" when a ticket is found)
   aicm.ticketPattern  regex for the ticket in the branch name (default "[A-Z][A-Z0-9]+-\d+")
+  aicm.prompt         replace the built-in style instructions (Conventional Commits)
   aicm.rules          extra style instructions for the model
 `
 
@@ -102,12 +104,20 @@ func run() error {
 			return err
 		}
 	}
+	tmpl, apply, err := ticket.Resolve(cfg["format"], tkt)
+	if err != nil {
+		return err
+	}
+	if o.ticket != "" && apply && !strings.Contains(tmpl, "{ticket}") {
+		fmt.Fprintf(os.Stderr, "aicm: warning: aicm.format %q has no {ticket}; -t %s is not used\n", tmpl, o.ticket)
+	}
 	req := provider.Request{
 		Model:    firstNonEmpty(o.model, cfg["model"], p.DefaultModel()),
 		Diff:     diff,
 		Stat:     stat,
+		Style:    cfg["prompt"],
 		Rules:    cfg["rules"],
-		Variants: tkt != "",
+		Variants: apply,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -118,9 +128,9 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if tkt != "" {
+		if apply {
 			for i, v := range variants {
-				variants[i] = ticket.Apply(cfg["format"], tkt, v)
+				variants[i] = ticket.Apply(tmpl, tkt, v)
 			}
 		}
 

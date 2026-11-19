@@ -36,6 +36,21 @@ func TestSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestSystemPromptStyle(t *testing.T) {
+	if !strings.Contains(SystemPrompt(Request{}), "Conventional Commits") {
+		t.Error("default style should be Conventional Commits")
+	}
+	p := SystemPrompt(Request{Style: "Use gitmoji.", Variants: true, Rules: "max 50 chars"})
+	if strings.Contains(p, "Conventional Commits") {
+		t.Errorf("custom style should replace the default:\n%s", p)
+	}
+	for _, want := range []string{"Use gitmoji.", "Output ONLY", "Never mention ticket", separator, "max 50 chars"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("custom-style prompt missing %q:\n%s", want, p)
+		}
+	}
+}
+
 func TestGet(t *testing.T) {
 	if p, err := Get(Default); err != nil || p.Name() != Default {
 		t.Fatalf("Get(%q) = %v, %v", Default, p, err)
@@ -67,6 +82,10 @@ func TestGenerate(t *testing.T) {
 	msgs, _ = Generate(context.Background(), f, Request{Model: "big", Variants: true})
 	if len(msgs) != 2 || f.model != "big" {
 		t.Errorf("variants: %q, model %q", msgs, f.model)
+	}
+	f.reply = "✨ add login\n===\n✨ add login"
+	if msgs, _ = Generate(context.Background(), f, Request{Variants: true}); len(msgs) != 1 {
+		t.Errorf("identical variants should collapse: %q", msgs)
 	}
 	f.reply = " "
 	if _, err := Generate(context.Background(), f, Request{}); err == nil {
