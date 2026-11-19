@@ -10,6 +10,17 @@ import (
 	"strings"
 )
 
+// gitError is a failed git command. It wraps the exec error, so callers can
+// tell an exit status apart from other failures.
+type gitError struct {
+	cmd string // the git subcommand, e.g. "config"
+	msg string // git's stderr, or the exec error when stderr is empty
+	err error
+}
+
+func (e *gitError) Error() string { return fmt.Sprintf("git %s: %s", e.cmd, e.msg) }
+func (e *gitError) Unwrap() error { return e.err }
+
 func run(args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("git", args...)
@@ -19,7 +30,7 @@ func run(args ...string) (string, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", fmt.Errorf("git %s: %s", args[0], msg)
+		return "", &gitError{args[0], msg, err}
 	}
 	return stdout.String(), nil
 }
@@ -58,19 +69,77 @@ func Branch() string {
 	return strings.TrimSpace(out)
 }
 
-// Config returns every aicm.* git config value, keyed by lowercase name
-// without the "aicm." prefix. Git already applies repo-over-global precedence.
-func Config() map[string]string {
-	cfg := map[string]string{}
-	out, err := run("config", "--get-regexp", `^aicm\.`)
-	if err != nil {
-		return cfg // exit 1 just means no keys are set
+// Entry is one aicm.* setting as git reports it. A key can appear once per
+// scope; the last entry for a key is the one in effect.
+type Entry struct {
+	Scope  string // system, global, local, worktree or command
+	Origin string // the file it came from, e.g. /home/u/.gitconfig
+	Key    string // lowercase name without the "aicm." prefix
+	Value  string
+}
+
+// ConfigEntries returns every aicm.* setting in git's precedence order
+// (system, global, local), so later entries override earlier ones. Exit
+// status 1 from git means no aicm keys are set; any other failure is an error.
+func ConfigEntries() ([]Entry, error) {
+	out, err := run("config", "-z", "--show-scope", "--show-origin", "--get-regexp", `^aicm\.`)
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil, nil
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		key, val, _ := strings.Cut(line, " ")
-		cfg[strings.ToLower(strings.TrimPrefix(key, "aicm."))] = val
+	if err != nil {
+		return nil, err
+	}
+	return parseEntries(out), nil
+}
+
+// parseEntries reads `git config -z --show-scope --show-origin` output:
+// scope, origin and "key\nvalue" fields, each terminated by NUL. -z keeps
+// multi-line values intact.
+func parseEntries(out string) []Entry {
+	var entries []Entry
+	f := strings.Split(out, "\x00")
+	for i := 0; i+2 < len(f); i += 3 {
+		key, val, _ := strings.Cut(f[i+2], "\n")
+		entries = append(entries, Entry{
+			Scope:  f[i],
+			Origin: strings.TrimPrefix(f[i+1], "file:"),
+			Key:    strings.ToLower(strings.TrimPrefix(key, "aicm.")),
+			Value:  val,
+		})
+	}
+	return entries
+}
+
+// Lookup returns the entries for key, in precedence order.
+func Lookup(entries []Entry, key string) []Entry {
+	var out []Entry
+	for _, e := range entries {
+		if e.Key == key {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Values maps each key to the value in effect. Repo settings override global
+// ones because they come later in entries.
+func Values(entries []Entry) map[string]string {
+	cfg := map[string]string{}
+	for _, e := range entries {
+		cfg[e.Key] = e.Value
 	}
 	return cfg
+}
+
+// Config returns the aicm.* values in effect, keyed by lowercase name
+// without the "aicm." prefix.
+func Config() (map[string]string, error) {
+	entries, err := ConfigEntries()
+	if err != nil {
+		return nil, err
+	}
+	return Values(entries), nil
 }
 
 // Commit runs git commit with msg, attached to the terminal so the user's

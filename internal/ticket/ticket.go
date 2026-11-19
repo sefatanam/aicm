@@ -26,6 +26,25 @@ func FromBranch(branch, pattern string) (string, error) {
 	return re.FindString(branch), nil
 }
 
+// Resolve picks the template to apply for ticket, if any. A template that
+// mentions {ticket} applies only when there is a ticket; one that doesn't
+// applies to every message. With no template, DefaultTemplate applies when
+// there is a ticket. applies is false when the message should be used as is.
+func Resolve(template, ticket string) (tmpl string, applies bool, err error) {
+	switch {
+	case template == "":
+		if ticket == "" {
+			return "", false, nil
+		}
+		return DefaultTemplate, true, nil
+	case !strings.Contains(template, "{message}"):
+		return "", false, fmt.Errorf("aicm.format %q must contain {message}", template)
+	case strings.Contains(template, "{ticket}") && ticket == "":
+		return "", false, nil
+	}
+	return template, true, nil
+}
+
 // Apply renders the template onto the subject line of message. The body
 // (everything after the first line) is kept unchanged.
 func Apply(template, ticket, message string) string {

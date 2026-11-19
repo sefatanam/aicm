@@ -22,6 +22,8 @@ type env struct {
 	repo    string
 	path    string
 	argsLog string
+	global  string // stands in for ~/.gitconfig
+	system  string // stands in for the system-wide git config
 }
 
 func setup(t *testing.T) *env {
@@ -46,7 +48,11 @@ func setup(t *testing.T) *env {
 		repo:    filepath.Join(dir, "repo"),
 		path:    fakeDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		argsLog: filepath.Join(dir, "args.txt"),
+		global:  filepath.Join(dir, "gitconfig"),
+		system:  filepath.Join(dir, "systemconfig"),
 	}
+	os.WriteFile(e.global, nil, 0o644)
+	os.WriteFile(e.system, nil, 0o644)
 	os.Mkdir(e.repo, 0o755)
 	e.git("init", "-q", "-b", "main")
 	e.git("config", "user.email", "test@example.com")
@@ -59,7 +65,7 @@ func (e *env) git(args ...string) string {
 	e.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = e.repo
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+e.global)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		e.t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -79,7 +85,8 @@ func (e *env) aicm(claudeOutput string, args ...string) (string, error) {
 	cmd.Dir = e.repo
 	cmd.Env = append(os.Environ(),
 		"PATH="+e.path,
-		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_GLOBAL="+e.global,
+		"GIT_CONFIG_SYSTEM="+e.system,
 		"CM_TEST_OUTPUT="+claudeOutput,
 		"CM_TEST_ARGS="+e.argsLog,
 	)
@@ -195,5 +202,143 @@ func TestProviderSelection(t *testing.T) {
 	e.git("config", "aicm.provider", "nope")
 	if out, err := e.aicm("feat: x"); err == nil || !strings.Contains(out, "unknown provider") {
 		t.Errorf("aicm.provider=nope: want error, got %v: %s", err, out)
+	}
+}
+
+func TestTemplateWithoutTicket(t *testing.T) {
+	e := setup(t)
+	e.stage("a.go", "package a\n")
+	e.git("config", "aicm.format", "[web] {message}")
+	out, err := e.aicm("feat(auth): add login\n===\nAdd login\n")
+	if err != nil || out != "[web] feat(auth): add login" {
+		t.Errorf("plain template on main: %v: %q", err, out)
+	}
+	if log, _ := os.ReadFile(e.argsLog); !strings.Contains(string(log), "TWO") {
+		t.Error("an applied template should ask for two variants")
+	}
+
+	out, _ = e.aicm("feat(auth): add login\n===\nAdd login\n", "-t", "AXE-9")
+	if !strings.Contains(out, "warning") || !strings.HasSuffix(out, "[web] feat(auth): add login") {
+		t.Errorf("-t with a template lacking {ticket} should warn: %q", out)
+	}
+
+	e.git("config", "aicm.format", "[web]")
+	if out, err := e.aicm("feat: x"); err == nil || !strings.Contains(out, "{message}") {
+		t.Errorf("template without {message}: want error, got %v: %q", err, out)
+	}
+}
+
+func TestTicketTemplateFallsBackWithoutTicket(t *testing.T) {
+	e := setup(t)
+	e.stage("a.go", "package a\n")
+	e.git("config", "aicm.format", "{ticket} | {message}")
+	out, err := e.aicm("feat(auth): add login\n===\nAdd login\n")
+	if err != nil || out != "feat(auth): add login" {
+		t.Errorf("no ticket: want plain conventional commit, got %v: %q", err, out)
+	}
+	if log, _ := os.ReadFile(e.argsLog); strings.Contains(string(log), "TWO") {
+		t.Error("no template applied, so only one message should be requested")
+	}
+
+	e.git("checkout", "-q", "-b", "feature/AXE-123-login")
+	if out, _ := e.aicm("feat(auth): add login\n===\nAdd login\n"); out != "AXE-123 | feat(auth): add login" {
+		t.Errorf("ticket branch: %q", out)
+	}
+}
+
+func TestStylePrompt(t *testing.T) {
+	e := setup(t)
+	e.stage("a.go", "package a\n")
+	e.git("config", "aicm.prompt", "Use gitmoji.\nOne line only.")
+	if out, err := e.aicm("✨ add login"); err != nil || out != "✨ add login" {
+		t.Fatalf("%v: %q", err, out)
+	}
+	log, _ := os.ReadFile(e.argsLog)
+	if !strings.Contains(string(log), "Use gitmoji.\nOne line only.") || strings.Contains(string(log), "Conventional Commits") {
+		t.Errorf("aicm.prompt should replace the default style; claude args:\n%s", log)
+	}
+}
+
+func TestConfigCommand(t *testing.T) {
+	e := setup(t)
+	e.git("config", "--global", "aicm.model", "haiku")
+	e.git("config", "--global", "aicm.rules", "lowercase, no period")
+	e.git("config", "aicm.model", "sonnet")
+	e.git("config", "aicm.format", "[{ticket}] {message}")
+	e.git("checkout", "-q", "-b", "feature/AXE-123-login")
+
+	out, err := e.aicm("", "config") // nothing staged: config must not need it
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	for _, want := range []string{
+		"branch feature/AXE-123-login",
+		"overrides global: haiku",
+		"lowercase, no period",
+		"[{ticket}] {message}",
+		"AXE-123 (from branch name)",
+		"[AXE-123] <message>",
+		"2 versions",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("aicm config missing %q:\n%s", want, out)
+		}
+	}
+	if _, err := os.Stat(e.argsLog); err == nil {
+		t.Error("aicm config must not call the provider")
+	}
+
+	if out, err := e.aicm("", "nope"); err == nil || !strings.Contains(out, `unknown command "nope"`) {
+		t.Errorf("unknown command: %v: %s", err, out)
+	}
+}
+
+func TestConfigBrokenFileIsAnError(t *testing.T) {
+	e := setup(t)
+	os.WriteFile(e.global, []byte("[aicm\n"), 0o644) // unterminated section
+	out, err := e.aicm("", "config")
+	if err == nil || !strings.Contains(out, "bad config") {
+		t.Errorf("a broken config file must fail, not show defaults: %v: %s", err, out)
+	}
+}
+
+func TestConfigShowsUnknownKeys(t *testing.T) {
+	e := setup(t)
+	e.git("config", "aicm.promt", "typo")
+	out, err := e.aicm("", "config")
+	if err != nil || !strings.Contains(out, "aicm.promt") || !strings.Contains(out, "Not settings aicm uses") {
+		t.Errorf("unknown key should be listed: %v: %s", err, out)
+	}
+}
+
+func TestConfigShowsMultilinePromptInFull(t *testing.T) {
+	e := setup(t)
+	e.git("config", "aicm.prompt", "Use gitmoji.\nOne line only.")
+	out, err := e.aicm("", "config")
+	if err != nil || !strings.Contains(out, "Use gitmoji.") || !strings.Contains(out, "One line only.") {
+		t.Errorf("multi-line prompt should be shown in full: %v: %s", err, out)
+	}
+}
+
+func TestConfigOutsideRepoShowsGlobalOnly(t *testing.T) {
+	e := setup(t)
+	os.WriteFile(e.system, []byte("[aicm]\n\tmodel = opus\n"), 0o644)
+	os.WriteFile(e.global, []byte("[aicm]\n\tmodel = sonnet\n"), 0o644)
+	cmd := exec.Command(e.bin, "config")
+	cmd.Dir = t.TempDir() // not a git repository
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+e.global, "GIT_CONFIG_SYSTEM="+e.system)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if strings.Contains(string(out), "opus") || !strings.Contains(string(out), "sonnet") {
+		t.Errorf("outside a repo only global settings should show:\n%s", out)
+	}
+}
+
+func TestConfigRejectsExtraArguments(t *testing.T) {
+	e := setup(t)
+	if out, err := e.aicm("", "config", "extra"); err == nil || !strings.Contains(out, "takes no arguments") {
+		t.Errorf("extra argument should error: %v: %s", err, out)
 	}
 }

@@ -23,6 +23,8 @@ const usage = `aicm - AI commit messages from your staged changes
 
 Usage:
   aicm [flags]
+  aicm config  show the settings in effect, where each comes from, and what
+               they mean on the current branch
 
 Flags:
   -p           print the message only (automatic when stdout is piped)
@@ -36,8 +38,10 @@ Flags:
 Config (git config [--global] <key> <value>):
   aicm.provider       AI provider (default claude)
   aicm.model          model to use (default depends on the provider; claude: haiku)
-  aicm.format         template when a ticket is found (default "{ticket}: {message}")
+  aicm.format         subject template; with {ticket} only used when a ticket is found
+                      (default "{ticket}: {message}" when a ticket is found)
   aicm.ticketPattern  regex for the ticket in the branch name (default "[A-Z][A-Z0-9]+-\d+")
+  aicm.prompt         replace the built-in style instructions (Conventional Commits)
   aicm.rules          extra style instructions for the model
 `
 
@@ -70,6 +74,17 @@ func run() error {
 		fmt.Println("aicm", version)
 		return nil
 	}
+	if flag.NArg() > 0 {
+		switch flag.Arg(0) {
+		case "config":
+			if flag.NArg() > 1 {
+				return errors.New("aicm config takes no arguments")
+			}
+			return showConfig(os.Stdout, o)
+		default:
+			return fmt.Errorf("unknown command %q (try aicm -h)", flag.Arg(0))
+		}
+	}
 	interactive := !o.print && !o.yes && ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stdin)
 	if !o.yes && !interactive {
 		o.print = true
@@ -91,23 +106,32 @@ func run() error {
 		return errors.New("nothing staged; stage files with `git add` or run `aicm -a`")
 	}
 
-	cfg := git.Config()
-	p, err := provider.Get(firstNonEmpty(o.provider, cfg["provider"], provider.Default))
+	cfg, err := git.Config()
 	if err != nil {
 		return err
 	}
-	tkt := o.ticket
-	if tkt == "" {
-		if tkt, err = ticket.FromBranch(git.Branch(), cfg["ticketpattern"]); err != nil {
-			return err
-		}
+	p, err := providerFor(o.provider, cfg)
+	if err != nil {
+		return err
+	}
+	tkt, _, err := findTicket(o.ticket, git.Branch(), cfg[keyTicketPattern])
+	if err != nil {
+		return err
+	}
+	tmpl, applies, err := ticket.Resolve(cfg[keyFormat], tkt)
+	if err != nil {
+		return err
+	}
+	if o.ticket != "" && applies && !strings.Contains(tmpl, "{ticket}") {
+		fmt.Fprintf(os.Stderr, "aicm: warning: aicm.format %q has no {ticket}; -t %s is not used\n", tmpl, o.ticket)
 	}
 	req := provider.Request{
-		Model:    firstNonEmpty(o.model, cfg["model"], p.DefaultModel()),
-		Diff:     diff,
-		Stat:     stat,
-		Rules:    cfg["rules"],
-		Variants: tkt != "",
+		Model:       firstNonEmpty(o.model, cfg[keyModel], p.DefaultModel()),
+		Diff:        diff,
+		Stat:        stat,
+		Style:       cfg[keyPrompt],
+		Rules:       cfg[keyRules],
+		TwoVariants: applies,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -118,9 +142,9 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if tkt != "" {
+		if applies {
 			for i, v := range variants {
-				variants[i] = ticket.Apply(cfg["format"], tkt, v)
+				variants[i] = ticket.Apply(tmpl, tkt, v)
 			}
 		}
 
@@ -185,4 +209,20 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// findTicket returns the ticket for this run: the -t flag if given, otherwise
+// the ticket found in the branch name. source says which, for display.
+func findTicket(flagValue, branch, pattern string) (tkt, source string, err error) {
+	if flagValue != "" {
+		return flagValue, "from -t", nil
+	}
+	tkt, err = ticket.FromBranch(branch, pattern)
+	return tkt, "from branch name", err
+}
+
+// providerFor returns the provider named by -P, else aicm.provider, else the
+// default.
+func providerFor(flagValue string, cfg map[string]string) (provider.Provider, error) {
+	return provider.Get(firstNonEmpty(flagValue, cfg[keyProvider], provider.Default))
 }

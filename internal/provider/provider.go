@@ -50,32 +50,42 @@ type Request struct {
 	Model string // empty means the provider's default
 	Diff  string
 	Stat  string
+	Style string // Style Prompt from aicm.prompt; empty means defaultStyle
 	Rules string // free-text style instructions from aicm.rules
-	// Variants asks for two messages: a Conventional Commit and a plain
-	// subject without a type prefix. Used when a ticket will be prepended.
-	Variants bool
+	// TwoVariants asks for two messages: one in the Style Prompt's format and
+	// a plain subject without a type prefix. Used when a Template applies.
+	TwoVariants bool
 }
 
-const basePrompt = `You write git commit messages from a staged diff.
+// contract holds what aicm relies on, whatever the Style Prompt says.
+const contract = `You write git commit messages from a staged diff.
 
 Output ONLY the commit message: no preamble, no explanation, no code fences.
+Never mention ticket or issue IDs; they are added separately.`
 
-Use Conventional Commits: "<type>(<optional scope>): <subject>".
+// defaultStyle is the Style Prompt used when aicm.prompt is unset.
+const defaultStyle = `Use Conventional Commits: "<type>(<optional scope>): <subject>".
 Types: feat, fix, chore, refactor, docs, test, perf, build, ci, style.
 - Subject: imperative mood, lowercase start, no trailing period, at most 72 characters.
-- Add a body (after one blank line) only when the change needs explaining; wrap at 72 characters and say why, not how.
-- Never mention ticket or issue IDs; they are added separately.`
+- Add a body (after one blank line) only when the change needs explaining; wrap at 72 characters and say why, not how.`
 
 const variantsPrompt = `
 
 Return TWO alternative messages separated by a line containing only "===":
-1. A Conventional Commit as described above.
-2. The same message WITHOUT the "<type>(<scope>): " prefix, starting with a capitalised imperative verb.`
+1. A message in the style above.
+2. The same message as a plain subject WITHOUT any "<type>(<scope>): " prefix, starting with a capitalised imperative verb.`
+
+// DefaultStyleName names the built-in Style Prompt, for display.
+const DefaultStyleName = "Conventional Commits"
 
 // SystemPrompt builds the system prompt for req.
 func SystemPrompt(req Request) string {
-	p := basePrompt
-	if req.Variants {
+	style := strings.TrimSpace(req.Style)
+	if style == "" {
+		style = defaultStyle
+	}
+	p := contract + "\n\n" + style
+	if req.TwoVariants {
 		p += variantsPrompt
 	}
 	if r := strings.TrimSpace(req.Rules); r != "" {
@@ -84,7 +94,8 @@ func SystemPrompt(req Request) string {
 	return p
 }
 
-// Generate asks p for a message, or two when req.Variants is set.
+// Generate asks p for a message, or two when req.TwoVariants is set and the
+// model returns two different ones.
 func Generate(ctx context.Context, p Provider, req Request) ([]string, error) {
 	model := req.Model
 	if model == "" {
@@ -100,7 +111,7 @@ func Generate(ctx context.Context, p Provider, req Request) ([]string, error) {
 	if len(msgs) == 0 {
 		return nil, fmt.Errorf("%s returned an empty message", p.Name())
 	}
-	if !req.Variants {
+	if !req.TwoVariants || (len(msgs) > 1 && msgs[1] == msgs[0]) {
 		msgs = msgs[:1]
 	}
 	return msgs, nil
