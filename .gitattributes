@@ -1,0 +1,2 @@
+# Keep LF everywhere: gofmt rejects CRLF, which Windows checkouts produce by default.
+* text=auto eol=lf
