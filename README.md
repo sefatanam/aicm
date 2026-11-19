@@ -97,4 +97,4 @@ GoReleaser is used if it is installed. If not, the script runs a pinned version 
 
 ## Releasing
 
-Push a `v*` tag (`git tag v0.1.0 && git push --tags`). The release workflow runs `./scripts/build.sh release`, which tests and then runs goreleaser, which publishes binaries to GitHub Releases and updates the cask in `sefatanam/homebrew-tap`. It needs a `HOMEBREW_TAP_TOKEN` repository secret with write access to the tap repo.
+Push a `v*` tag (`git tag v0.1.0 && git push --tags`). The release workflow runs `./scripts/build.sh release`, which tests and then runs goreleaser, which publishes binaries to GitHub Releases and updates the cask in `sefatanam/homebrew-tap`. It needs a `HOMEBREW_TAP_DEPLOY_KEY` repository secret: the private half of an SSH deploy key that has write access to `sefatanam/homebrew-tap`.

@@ -6,7 +6,7 @@
 #   ./scripts/build.sh build      build ./bin/aicm for this machine
 #   ./scripts/build.sh install    install aicm into $(go env GOPATH)/bin
 #   ./scripts/build.sh snapshot   build release archives for every platform into ./dist (no publish)
-#   ./scripts/build.sh release    publish a release for the current tag (CI only; needs GITHUB_TOKEN, HOMEBREW_TAP_TOKEN)
+#   ./scripts/build.sh release    publish a release for the current tag (CI only; needs GITHUB_TOKEN, HOMEBREW_TAP_DEPLOY_KEY)
 #   ./scripts/build.sh clean      remove ./bin and ./dist
 set -euo pipefail
 
@@ -58,7 +58,7 @@ snapshot() {
 release() {
   git describe --exact-match --tags >/dev/null 2>&1 || die "HEAD is not tagged; push a v* tag to release"
   [[ -n "${GITHUB_TOKEN:-}" ]] || die "GITHUB_TOKEN is not set"
-  [[ -n "${HOMEBREW_TAP_TOKEN:-}" ]] || die "HOMEBREW_TAP_TOKEN is not set"
+  [[ -n "${HOMEBREW_TAP_DEPLOY_KEY:-}" ]] || die "HOMEBREW_TAP_DEPLOY_KEY is not set"
   check
   log "goreleaser release"
   run_goreleaser release --clean
