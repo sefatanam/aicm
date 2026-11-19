@@ -20,7 +20,7 @@ Done when every check below passes. Stop and report the first failure; fix only 
 
 Done when the user has confirmed one exact `vX.Y.Z`.
 
-- Last release: `git describe --tags --abbrev=0`. Changes: `git log --oneline <last>..HEAD`. Nothing since the last tag → stop, there is nothing to release.
+- Last release: `git tag -l 'v*' --sort=-v:refname | head -1`. `git describe` won't do: v0.1.0's commit was later reworded, so that tag isn't on `main`. Changes: `git log --oneline <last>..HEAD`. Nothing since the last tag → stop, there is nothing to release.
 - If the argument names a version or a bump, use it. Otherwise propose one from the Conventional Commit types: `feat` → minor, `fix`/`perf`/anything else → patch, `!` or `BREAKING CHANGE` → major (before 1.0 a breaking change bumps minor).
 - Show the user the proposed version and the commit list, and wait for their confirmation.
 
