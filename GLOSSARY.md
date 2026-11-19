@@ -10,10 +10,13 @@ The changes added to the git index and waiting to be committed. They are the onl
 An issue-tracker ID such as `AXE-123` or `ONE-0001` that links a commit to a piece of work. Usually taken from the branch name.
 
 **Template**
-The pattern that places the Ticket and the generated message into the final subject line, e.g. `{ticket}: {message}`. Only used when there is a Ticket.
+The pattern that shapes the final subject line around the generated message, e.g. `{ticket}: {message}` or `[web] {message}`. A Template that mentions the Ticket is only used when there is a Ticket; one that doesn't is used for every Commit Message. With a Ticket and no Template configured, `{ticket}: {message}` is used.
+
+**Style Prompt**
+The instructions that define how a message is written (by default, Conventional Commits). The user may replace it entirely; what aicm needs to work (output only the message, leave Tickets out, the Variant format) is never part of it and always applies.
 
 **Rules**
-Free-text style instructions from the user (e.g. "lowercase, no period") that the Provider follows when writing the message.
+Free-text style instructions from the user (e.g. "lowercase, no period") added on top of the Style Prompt, taking priority over it.
 
 **Provider**
 The AI service that writes the Commit Message. Claude is the default; Ollama, Codex and Gemini are planned.
@@ -22,4 +25,4 @@ The AI service that writes the Commit Message. Claude is the default; Ollama, Co
 One of the candidate Commit Messages offered for the same Staged Changes. When there is a Ticket, aicm offers two: one with a Conventional Commits type and one without.
 
 **Conventional Commits**
-The default message style when nothing else is configured: `<type>(<scope>): <subject>`, with types such as `feat`, `fix`, `chore` and `refactor`.
+The default Style Prompt: the message style used when nothing else is configured: `<type>(<scope>): <subject>`, with types such as `feat`, `fix`, `chore` and `refactor`.
