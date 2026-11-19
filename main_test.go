@@ -22,6 +22,7 @@ type env struct {
 	repo    string
 	path    string
 	argsLog string
+	global  string // stands in for ~/.gitconfig
 }
 
 func setup(t *testing.T) *env {
@@ -46,7 +47,9 @@ func setup(t *testing.T) *env {
 		repo:    filepath.Join(dir, "repo"),
 		path:    fakeDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		argsLog: filepath.Join(dir, "args.txt"),
+		global:  filepath.Join(dir, "gitconfig"),
 	}
+	os.WriteFile(e.global, nil, 0o644)
 	os.Mkdir(e.repo, 0o755)
 	e.git("init", "-q", "-b", "main")
 	e.git("config", "user.email", "test@example.com")
@@ -59,7 +62,7 @@ func (e *env) git(args ...string) string {
 	e.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = e.repo
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+e.global)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		e.t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -79,7 +82,7 @@ func (e *env) aicm(claudeOutput string, args ...string) (string, error) {
 	cmd.Dir = e.repo
 	cmd.Env = append(os.Environ(),
 		"PATH="+e.path,
-		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_GLOBAL="+e.global,
 		"CM_TEST_OUTPUT="+claudeOutput,
 		"CM_TEST_ARGS="+e.argsLog,
 	)
@@ -247,7 +250,41 @@ func TestStylePrompt(t *testing.T) {
 		t.Fatalf("%v: %q", err, out)
 	}
 	log, _ := os.ReadFile(e.argsLog)
-	if !strings.Contains(string(log), "Use gitmoji.") || strings.Contains(string(log), "Conventional Commits") {
+	if !strings.Contains(string(log), "Use gitmoji.\nOne line only.") || strings.Contains(string(log), "Conventional Commits") {
 		t.Errorf("aicm.prompt should replace the default style; claude args:\n%s", log)
+	}
+}
+
+func TestConfigCommand(t *testing.T) {
+	e := setup(t)
+	e.git("config", "--global", "aicm.model", "haiku")
+	e.git("config", "--global", "aicm.rules", "lowercase, no period")
+	e.git("config", "aicm.model", "sonnet")
+	e.git("config", "aicm.format", "[{ticket}] {message}")
+	e.git("checkout", "-q", "-b", "feature/AXE-123-login")
+
+	out, err := e.aicm("", "config") // nothing staged: config must not need it
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	for _, want := range []string{
+		"branch feature/AXE-123-login",
+		"overrides global: haiku",
+		"lowercase, no period",
+		"[{ticket}] {message}",
+		"AXE-123 (from branch name)",
+		"[AXE-123] <message>",
+		"2 versions",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("aicm config missing %q:\n%s", want, out)
+		}
+	}
+	if _, err := os.Stat(e.argsLog); err == nil {
+		t.Error("aicm config must not call the provider")
+	}
+
+	if out, err := e.aicm("", "nope"); err == nil || !strings.Contains(out, `unknown command "nope"`) {
+		t.Errorf("unknown command: %v: %s", err, out)
 	}
 }

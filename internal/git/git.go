@@ -58,17 +58,49 @@ func Branch() string {
 	return strings.TrimSpace(out)
 }
 
-// Config returns every aicm.* git config value, keyed by lowercase name
-// without the "aicm." prefix. Git already applies repo-over-global precedence.
+// Entry is one aicm.* setting as git reports it. A key can appear once per
+// scope; the last entry for a key is the one in effect.
+type Entry struct {
+	Scope  string // system, global, local, worktree or command
+	Origin string // the file it came from, e.g. /home/u/.gitconfig
+	Key    string // lowercase name without the "aicm." prefix
+	Value  string
+}
+
+// ConfigEntries returns every aicm.* setting in git's precedence order
+// (system, global, local), so later entries override earlier ones.
+func ConfigEntries() []Entry {
+	out, err := run("config", "-z", "--show-scope", "--show-origin", "--get-regexp", `^aicm\.`)
+	if err != nil {
+		return nil // exit 1 just means no keys are set
+	}
+	return parseEntries(out)
+}
+
+// parseEntries reads `git config -z --show-scope --show-origin` output:
+// scope, origin and "key\nvalue" fields, each terminated by NUL. -z keeps
+// multi-line values intact.
+func parseEntries(out string) []Entry {
+	var entries []Entry
+	f := strings.Split(out, "\x00")
+	for i := 0; i+2 < len(f); i += 3 {
+		key, val, _ := strings.Cut(f[i+2], "\n")
+		entries = append(entries, Entry{
+			Scope:  f[i],
+			Origin: strings.TrimPrefix(f[i+1], "file:"),
+			Key:    strings.ToLower(strings.TrimPrefix(key, "aicm.")),
+			Value:  val,
+		})
+	}
+	return entries
+}
+
+// Config returns the aicm.* values in effect, keyed by lowercase name
+// without the "aicm." prefix. Repo settings override global ones.
 func Config() map[string]string {
 	cfg := map[string]string{}
-	out, err := run("config", "--get-regexp", `^aicm\.`)
-	if err != nil {
-		return cfg // exit 1 just means no keys are set
-	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		key, val, _ := strings.Cut(line, " ")
-		cfg[strings.ToLower(strings.TrimPrefix(key, "aicm."))] = val
+	for _, e := range ConfigEntries() {
+		cfg[e.Key] = e.Value
 	}
 	return cfg
 }

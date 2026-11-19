@@ -23,6 +23,8 @@ const usage = `aicm - AI commit messages from your staged changes
 
 Usage:
   aicm [flags]
+  aicm config  show the settings in effect, where each comes from, and what
+               they mean on the current branch
 
 Flags:
   -p           print the message only (automatic when stdout is piped)
@@ -71,6 +73,13 @@ func run() error {
 	if o.version {
 		fmt.Println("aicm", version)
 		return nil
+	}
+	switch flag.Arg(0) {
+	case "":
+	case "config":
+		return showConfig(os.Stdout, o)
+	default:
+		return fmt.Errorf("unknown command %q (try aicm -h)", flag.Arg(0))
 	}
 	interactive := !o.print && !o.yes && ui.IsTerminal(os.Stdout) && ui.IsTerminal(os.Stdin)
 	if !o.yes && !interactive {

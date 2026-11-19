@@ -75,6 +75,25 @@ Whenever a format is applied, aicm offers two versions to pick from: with and wi
 
 Settings use `git config`: set them once with `--global`, or per repo without it. Repo settings take priority over global ones.
 
+Check what's in effect with `aicm config`. It lists each setting, its value and where it comes from (this repo, global or default), then what that means on the current branch:
+
+```console
+$ aicm config
+aicm settings for ~/work/shop (branch feature/AXE-123-login)
+
+  provider       claude                default
+  model          sonnet                local  (overrides global: haiku)
+  format         [{ticket}] {message}  global  ~/.gitconfig
+  ticketPattern  [A-Z][A-Z0-9]+-\d+    default
+  prompt         Conventional Commits  default
+  rules          lowercase, no period  global  ~/.gitconfig
+
+On this branch:
+  ticket   AXE-123 (from branch name)
+  subject  [AXE-123] <message>
+  offers   2 versions (with and without type)
+```
+
 | Key | Default | Description |
 |---|---|---|
 | `aicm.provider` | `claude` | AI provider (currently `claude`) |
