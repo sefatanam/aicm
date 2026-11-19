@@ -69,7 +69,7 @@ How the subject is shaped:
 | no | unset, or mentions `{ticket}` | plain [Conventional Commits](https://www.conventionalcommits.org): `feat(auth): …` |
 | either | `[web] {message}` (no `{ticket}`) | `[web] feat(auth): …` |
 
-Whenever a format is applied, aicm offers two versions to pick from: with and without the Conventional Commits type.
+Whenever a format is applied, aicm offers two versions to pick from: one in your style (by default Conventional Commits) and one as a plain subject with no type prefix.
 
 ## Configuration
 
@@ -91,7 +91,7 @@ aicm settings for ~/work/shop (branch feature/AXE-123-login)
 On this branch:
   ticket   AXE-123 (from branch name)
   subject  [AXE-123] <message>
-  offers   2 versions (with and without type)
+  offers   2 versions (in your style, and a plain subject)
 ```
 
 | Key | Default | Description |

@@ -23,6 +23,7 @@ type env struct {
 	path    string
 	argsLog string
 	global  string // stands in for ~/.gitconfig
+	system  string // stands in for the system-wide git config
 }
 
 func setup(t *testing.T) *env {
@@ -48,8 +49,10 @@ func setup(t *testing.T) *env {
 		path:    fakeDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		argsLog: filepath.Join(dir, "args.txt"),
 		global:  filepath.Join(dir, "gitconfig"),
+		system:  filepath.Join(dir, "systemconfig"),
 	}
 	os.WriteFile(e.global, nil, 0o644)
+	os.WriteFile(e.system, nil, 0o644)
 	os.Mkdir(e.repo, 0o755)
 	e.git("init", "-q", "-b", "main")
 	e.git("config", "user.email", "test@example.com")
@@ -83,6 +86,7 @@ func (e *env) aicm(claudeOutput string, args ...string) (string, error) {
 	cmd.Env = append(os.Environ(),
 		"PATH="+e.path,
 		"GIT_CONFIG_GLOBAL="+e.global,
+		"GIT_CONFIG_SYSTEM="+e.system,
 		"CM_TEST_OUTPUT="+claudeOutput,
 		"CM_TEST_ARGS="+e.argsLog,
 	)
@@ -286,5 +290,55 @@ func TestConfigCommand(t *testing.T) {
 
 	if out, err := e.aicm("", "nope"); err == nil || !strings.Contains(out, `unknown command "nope"`) {
 		t.Errorf("unknown command: %v: %s", err, out)
+	}
+}
+
+func TestConfigBrokenFileIsAnError(t *testing.T) {
+	e := setup(t)
+	os.WriteFile(e.global, []byte("[aicm\n"), 0o644) // unterminated section
+	out, err := e.aicm("", "config")
+	if err == nil || !strings.Contains(out, "bad config") {
+		t.Errorf("a broken config file must fail, not show defaults: %v: %s", err, out)
+	}
+}
+
+func TestConfigShowsUnknownKeys(t *testing.T) {
+	e := setup(t)
+	e.git("config", "aicm.promt", "typo")
+	out, err := e.aicm("", "config")
+	if err != nil || !strings.Contains(out, "aicm.promt") || !strings.Contains(out, "Not settings aicm uses") {
+		t.Errorf("unknown key should be listed: %v: %s", err, out)
+	}
+}
+
+func TestConfigShowsMultilinePromptInFull(t *testing.T) {
+	e := setup(t)
+	e.git("config", "aicm.prompt", "Use gitmoji.\nOne line only.")
+	out, err := e.aicm("", "config")
+	if err != nil || !strings.Contains(out, "Use gitmoji.") || !strings.Contains(out, "One line only.") {
+		t.Errorf("multi-line prompt should be shown in full: %v: %s", err, out)
+	}
+}
+
+func TestConfigOutsideRepoShowsGlobalOnly(t *testing.T) {
+	e := setup(t)
+	os.WriteFile(e.system, []byte("[aicm]\n\tmodel = opus\n"), 0o644)
+	os.WriteFile(e.global, []byte("[aicm]\n\tmodel = sonnet\n"), 0o644)
+	cmd := exec.Command(e.bin, "config")
+	cmd.Dir = t.TempDir() // not a git repository
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+e.global, "GIT_CONFIG_SYSTEM="+e.system)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if strings.Contains(string(out), "opus") || !strings.Contains(string(out), "sonnet") {
+		t.Errorf("outside a repo only global settings should show:\n%s", out)
+	}
+}
+
+func TestConfigRejectsExtraArguments(t *testing.T) {
+	e := setup(t)
+	if out, err := e.aicm("", "config", "extra"); err == nil || !strings.Contains(out, "takes no arguments") {
+		t.Errorf("extra argument should error: %v: %s", err, out)
 	}
 }

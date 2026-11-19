@@ -27,7 +27,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestSystemPrompt(t *testing.T) {
-	p := SystemPrompt(Request{Variants: true, Rules: "lowercase, no period"})
+	p := SystemPrompt(Request{TwoVariants: true, Rules: "lowercase, no period"})
 	if !strings.Contains(p, separator) || !strings.Contains(p, "lowercase, no period") {
 		t.Errorf("prompt missing variants or rules:\n%s", p)
 	}
@@ -40,7 +40,7 @@ func TestSystemPromptStyle(t *testing.T) {
 	if !strings.Contains(SystemPrompt(Request{}), "Conventional Commits") {
 		t.Error("default style should be Conventional Commits")
 	}
-	p := SystemPrompt(Request{Style: "Use gitmoji.", Variants: true, Rules: "max 50 chars"})
+	p := SystemPrompt(Request{Style: "Use gitmoji.", TwoVariants: true, Rules: "max 50 chars"})
 	if strings.Contains(p, "Conventional Commits") {
 		t.Errorf("custom style should replace the default:\n%s", p)
 	}
@@ -79,12 +79,12 @@ func TestGenerate(t *testing.T) {
 	if f.model != "small" {
 		t.Errorf("default model not used: %q", f.model)
 	}
-	msgs, _ = Generate(context.Background(), f, Request{Model: "big", Variants: true})
+	msgs, _ = Generate(context.Background(), f, Request{Model: "big", TwoVariants: true})
 	if len(msgs) != 2 || f.model != "big" {
 		t.Errorf("variants: %q, model %q", msgs, f.model)
 	}
 	f.reply = "✨ add login\n===\n✨ add login"
-	if msgs, _ = Generate(context.Background(), f, Request{Variants: true}); len(msgs) != 1 {
+	if msgs, _ = Generate(context.Background(), f, Request{TwoVariants: true}); len(msgs) != 1 {
 		t.Errorf("identical variants should collapse: %q", msgs)
 	}
 	f.reply = " "

@@ -10,6 +10,17 @@ import (
 	"strings"
 )
 
+// gitError is a failed git command. It wraps the exec error, so callers can
+// tell an exit status apart from other failures.
+type gitError struct {
+	cmd string // the git subcommand, e.g. "config"
+	msg string // git's stderr, or the exec error when stderr is empty
+	err error
+}
+
+func (e *gitError) Error() string { return fmt.Sprintf("git %s: %s", e.cmd, e.msg) }
+func (e *gitError) Unwrap() error { return e.err }
+
 func run(args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("git", args...)
@@ -19,7 +30,7 @@ func run(args ...string) (string, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", fmt.Errorf("git %s: %s", args[0], msg)
+		return "", &gitError{args[0], msg, err}
 	}
 	return stdout.String(), nil
 }
@@ -68,13 +79,18 @@ type Entry struct {
 }
 
 // ConfigEntries returns every aicm.* setting in git's precedence order
-// (system, global, local), so later entries override earlier ones.
-func ConfigEntries() []Entry {
+// (system, global, local), so later entries override earlier ones. Exit
+// status 1 from git means no aicm keys are set; any other failure is an error.
+func ConfigEntries() ([]Entry, error) {
 	out, err := run("config", "-z", "--show-scope", "--show-origin", "--get-regexp", `^aicm\.`)
-	if err != nil {
-		return nil // exit 1 just means no keys are set
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil, nil
 	}
-	return parseEntries(out)
+	if err != nil {
+		return nil, err
+	}
+	return parseEntries(out), nil
 }
 
 // parseEntries reads `git config -z --show-scope --show-origin` output:
@@ -95,14 +111,35 @@ func parseEntries(out string) []Entry {
 	return entries
 }
 
-// Config returns the aicm.* values in effect, keyed by lowercase name
-// without the "aicm." prefix. Repo settings override global ones.
-func Config() map[string]string {
+// Lookup returns the entries for key, in precedence order.
+func Lookup(entries []Entry, key string) []Entry {
+	var out []Entry
+	for _, e := range entries {
+		if e.Key == key {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Values maps each key to the value in effect. Repo settings override global
+// ones because they come later in entries.
+func Values(entries []Entry) map[string]string {
 	cfg := map[string]string{}
-	for _, e := range ConfigEntries() {
+	for _, e := range entries {
 		cfg[e.Key] = e.Value
 	}
 	return cfg
+}
+
+// Config returns the aicm.* values in effect, keyed by lowercase name
+// without the "aicm." prefix.
+func Config() (map[string]string, error) {
+	entries, err := ConfigEntries()
+	if err != nil {
+		return nil, err
+	}
+	return Values(entries), nil
 }
 
 // Commit runs git commit with msg, attached to the terminal so the user's

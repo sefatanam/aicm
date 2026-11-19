@@ -29,8 +29,8 @@ func FromBranch(branch, pattern string) (string, error) {
 // Resolve picks the template to apply for ticket, if any. A template that
 // mentions {ticket} applies only when there is a ticket; one that doesn't
 // applies to every message. With no template, DefaultTemplate applies when
-// there is a ticket. apply is false when the message should be left as is.
-func Resolve(template, ticket string) (tmpl string, apply bool, err error) {
+// there is a ticket. applies is false when the message should be used as is.
+func Resolve(template, ticket string) (tmpl string, applies bool, err error) {
 	switch {
 	case template == "":
 		if ticket == "" {

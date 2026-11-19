@@ -52,9 +52,9 @@ type Request struct {
 	Stat  string
 	Style string // Style Prompt from aicm.prompt; empty means defaultStyle
 	Rules string // free-text style instructions from aicm.rules
-	// Variants asks for two messages: one in the Style Prompt's format and a
-	// plain subject without a type prefix. Used when a Template is applied.
-	Variants bool
+	// TwoVariants asks for two messages: one in the Style Prompt's format and
+	// a plain subject without a type prefix. Used when a Template applies.
+	TwoVariants bool
 }
 
 // contract holds what aicm relies on, whatever the Style Prompt says.
@@ -75,6 +75,9 @@ Return TWO alternative messages separated by a line containing only "===":
 1. A message in the style above.
 2. The same message as a plain subject WITHOUT any "<type>(<scope>): " prefix, starting with a capitalised imperative verb.`
 
+// DefaultStyleName names the built-in Style Prompt, for display.
+const DefaultStyleName = "Conventional Commits"
+
 // SystemPrompt builds the system prompt for req.
 func SystemPrompt(req Request) string {
 	style := strings.TrimSpace(req.Style)
@@ -82,7 +85,7 @@ func SystemPrompt(req Request) string {
 		style = defaultStyle
 	}
 	p := contract + "\n\n" + style
-	if req.Variants {
+	if req.TwoVariants {
 		p += variantsPrompt
 	}
 	if r := strings.TrimSpace(req.Rules); r != "" {
@@ -91,7 +94,7 @@ func SystemPrompt(req Request) string {
 	return p
 }
 
-// Generate asks p for a message, or two when req.Variants is set and the
+// Generate asks p for a message, or two when req.TwoVariants is set and the
 // model returns two different ones.
 func Generate(ctx context.Context, p Provider, req Request) ([]string, error) {
 	model := req.Model
@@ -108,7 +111,7 @@ func Generate(ctx context.Context, p Provider, req Request) ([]string, error) {
 	if len(msgs) == 0 {
 		return nil, fmt.Errorf("%s returned an empty message", p.Name())
 	}
-	if !req.Variants || (len(msgs) > 1 && msgs[1] == msgs[0]) {
+	if !req.TwoVariants || (len(msgs) > 1 && msgs[1] == msgs[0]) {
 		msgs = msgs[:1]
 	}
 	return msgs, nil

@@ -13,38 +13,65 @@ import (
 	"github.com/sefatanam/aicm/internal/ticket"
 )
 
-// setting is one aicm.* key as `aicm config` lists it.
-type setting struct {
-	name string // as documented, e.g. ticketPattern
-	def  func(cfg map[string]string) string
+// Setting keys, as git lowercases them after "aicm.".
+const (
+	keyProvider      = "provider"
+	keyModel         = "model"
+	keyFormat        = "format"
+	keyTicketPattern = "ticketpattern"
+	keyPrompt        = "prompt"
+	keyRules         = "rules"
+)
+
+// settings lists the keys `aicm config` shows, in display order, with the
+// name the README documents for each.
+var settings = []struct{ key, name string }{
+	{keyProvider, "provider"},
+	{keyModel, "model"},
+	{keyFormat, "format"},
+	{keyTicketPattern, "ticketPattern"},
+	{keyPrompt, "prompt"},
+	{keyRules, "rules"},
 }
 
-var settings = []setting{
-	{"provider", func(map[string]string) string { return provider.Default }},
-	{"model", func(cfg map[string]string) string {
-		p, err := provider.Get(firstNonEmpty(cfg["provider"], provider.Default))
+// defaultFor describes the value used when a setting is unset.
+func defaultFor(key string, cfg map[string]string) string {
+	switch key {
+	case keyProvider:
+		return provider.Default
+	case keyModel:
+		p, err := providerFor("", cfg)
 		if err != nil {
 			return "-"
 		}
 		return p.DefaultModel()
-	}},
-	{"format", func(map[string]string) string { return ticket.DefaultTemplate + " when a ticket is found" }},
-	{"ticketPattern", func(map[string]string) string { return ticket.DefaultPattern }},
-	{"prompt", func(map[string]string) string { return "Conventional Commits" }},
-	{"rules", func(map[string]string) string { return "-" }},
+	case keyFormat:
+		return ticket.DefaultTemplate + " when a ticket is found"
+	case keyTicketPattern:
+		return ticket.DefaultPattern
+	case keyPrompt:
+		return provider.DefaultStyleName
+	}
+	return "-"
 }
 
-// showConfig prints every aicm setting in effect, where it comes from, and
-// what it means for the current branch. It never calls the provider.
+// showConfig prints the aicm settings in effect, where each comes from, and
+// what they mean on the current branch. It never calls the provider.
 func showConfig(w io.Writer, o options) error {
-	entries := git.ConfigEntries()
-	cfg := git.Config()
 	inRepo := git.EnsureRepo() == nil
+	entries, err := git.ConfigEntries()
+	if err != nil {
+		return err
+	}
+	if !inRepo {
+		entries = withoutScope(entries, "system")
+	}
+	cfg := git.Values(entries)
+
 	branch := ""
 	if inRepo {
 		branch = git.Branch()
 	}
-
 	wd, _ := os.Getwd()
 	switch {
 	case !inRepo:
@@ -55,72 +82,106 @@ func showConfig(w io.Writer, o options) error {
 		fmt.Fprintf(w, "aicm settings for %s (branch %s)\n\n", home(wd), branch)
 	}
 
+	type block struct{ name, value string }
+	var multiline []block
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	known := map[string]bool{}
 	for _, s := range settings {
-		var set []git.Entry
-		for _, e := range entries {
-			if e.Key == strings.ToLower(s.name) {
-				set = append(set, e)
-			}
-		}
+		known[s.key] = true
+		set := git.Lookup(entries, s.key)
 		if len(set) == 0 {
-			fmt.Fprintf(tw, "  %s\t%s\tdefault\n", s.name, s.def(cfg))
+			fmt.Fprintf(tw, "  %s\t%s\tdefault\n", s.name, defaultFor(s.key, cfg))
 			continue
 		}
-		cur := set[len(set)-1]
-		source := cur.Scope
-		if cur.Scope != "local" {
-			source += "  " + home(cur.Origin)
+		value := oneLine(set[len(set)-1].Value)
+		if strings.Contains(set[len(set)-1].Value, "\n") {
+			value = fmt.Sprintf("(%d lines, shown below)", strings.Count(set[len(set)-1].Value, "\n")+1)
+			multiline = append(multiline, block{s.name, set[len(set)-1].Value})
 		}
-		if len(set) > 1 {
-			prev := set[len(set)-2]
-			source += fmt.Sprintf("  (overrides %s: %s)", prev.Scope, oneLine(prev.Value))
-		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\n", s.name, oneLine(cur.Value), source)
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", s.name, value, sourceOf(set))
 	}
 	tw.Flush()
+
+	for _, b := range multiline {
+		fmt.Fprintf(w, "\n%s:\n", b.name)
+		for _, line := range strings.Split(b.value, "\n") {
+			fmt.Fprintf(w, "    %s\n", line)
+		}
+	}
+
+	var unknown []git.Entry
+	for _, e := range entries {
+		if !known[e.Key] {
+			unknown = append(unknown, e)
+		}
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintln(w, "\nNot settings aicm uses (check the spelling):")
+		for _, e := range unknown {
+			fmt.Fprintf(w, "  aicm.%s = %s  (%s)\n", e.Key, oneLine(e.Value), e.Scope)
+		}
+	}
 
 	if !inRepo {
 		return nil
 	}
+	tkt, source, err := findTicket(o.ticket, branch, cfg[keyTicketPattern])
+	if err != nil {
+		return err
+	}
+	tmpl, applies, err := ticket.Resolve(cfg[keyFormat], tkt)
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintln(w, "\nOn this branch:")
-	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	defer tw.Flush()
-
-	tkt, from := o.ticket, "from -t"
+	bw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if tkt == "" {
-		var err error
-		if tkt, err = ticket.FromBranch(branch, cfg["ticketpattern"]); err != nil {
-			fmt.Fprintf(tw, "  ticket\terror: %v\n", err)
-			return nil
-		}
-		from = "from branch name"
-	}
-	if tkt == "" {
-		fmt.Fprintf(tw, "  ticket\tnone\n")
+		fmt.Fprintln(bw, "  ticket\tnone")
 	} else {
-		fmt.Fprintf(tw, "  ticket\t%s (%s)\n", tkt, from)
+		fmt.Fprintf(bw, "  ticket\t%s (%s)\n", tkt, source)
 	}
-
-	tmpl, apply, err := ticket.Resolve(cfg["format"], tkt)
-	switch {
-	case err != nil:
-		fmt.Fprintf(tw, "  subject\terror: %v\n", err)
-	case apply:
-		fmt.Fprintf(tw, "  subject\t%s\n", ticket.Apply(tmpl, tkt, "<message>"))
-		fmt.Fprintf(tw, "  offers\t2 versions (with and without type)\n")
-	default:
-		style := "Conventional Commits"
-		if strings.TrimSpace(cfg["prompt"]) != "" {
+	if applies {
+		fmt.Fprintf(bw, "  subject\t%s\n", ticket.Apply(tmpl, tkt, "<message>"))
+		fmt.Fprintln(bw, "  offers\t2 versions (in your style, and a plain subject)")
+	} else {
+		style := provider.DefaultStyleName
+		if cfg[keyPrompt] != "" {
 			style = "your aicm.prompt style"
 		}
-		fmt.Fprintf(tw, "  subject\t<message> in %s\n", style)
-		fmt.Fprintf(tw, "  offers\t1 message\n")
+		fmt.Fprintf(bw, "  subject\t<message> in %s\n", style)
+		fmt.Fprintln(bw, "  offers\t1 message")
 	}
-	return nil
+	return bw.Flush()
 }
 
-// oneLine shortens a multi-line value to its first line.
+// sourceOf describes where the effective setting comes from, and the value it
+// overrides when more than one scope sets it.
+func sourceOf(set []git.Entry) string {
+	cur := set[len(set)-1]
+	src := cur.Scope
+	if cur.Scope != "local" {
+		src += "  " + home(cur.Origin)
+	}
+	if len(set) > 1 {
+		prev := set[len(set)-2]
+		src += fmt.Sprintf("  (overrides %s: %s)", prev.Scope, oneLine(prev.Value))
+	}
+	return src
+}
+
+// withoutScope drops the entries that came from scope.
+func withoutScope(entries []git.Entry, scope string) []git.Entry {
+	var kept []git.Entry
+	for _, e := range entries {
+		if e.Scope != scope {
+			kept = append(kept, e)
+		}
+	}
+	return kept
+}
+
+// oneLine shortens a multi-line value to its first line, for table cells.
 func oneLine(v string) string {
 	first, rest, ok := strings.Cut(v, "\n")
 	if !ok {
