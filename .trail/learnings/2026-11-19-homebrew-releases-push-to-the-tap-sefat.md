@@ -3,7 +3,7 @@ title: "Homebrew releases push to the tap with a deploy key, not a personal acce
 author: Sefat
 date: 2026-11-19
 branch: main
-cost: { minutes: 25, tokens: 84826 }
+cost: { minutes: 26, tokens: 86764 }
 id: l-3c2de1a8
 scope: repo
 status: active
@@ -21,11 +21,14 @@ touches:
 The release publishes the Homebrew cask to sefatanam/homebrew-tap over SSH using a write deploy key that only covers the tap repo. A deploy key can be set up entirely from the gh CLI, doesn't expire, and gives less access than a personal access token.
 - The repo forces LF line endings for every file. Windows runners check out with core.autocrlf=true, so files arrive with CRLF and gofmt -l flags every .go file, failing `build.sh check` on Windows only.
 - The test matrix has fail-fast off. With it on, the Windows failure cancelled the Linux and macOS jobs, which made it look as if every OS was broken.
+- v0.1.0 was released from a commit that was later reworded, so the v0.1.0 tag points at a commit outside main's history (same files, different hash). We left it there: it's already published, and the GitHub Release, checksums and Homebrew cask all refer to it.
+- Release tooling finds the last release by sorting tags by version, not with git describe.
 
 ## Tried and ruled out
 - A personal access token in HOMEBREW_TAP_TOKEN: it can't be created through the API, so someone has to click through the browser, and it expires and quietly breaks releases.
 - Reusing the gh OAuth token as the secret: it has access to the whole account, which is far too much.
 - Reproducing with act: act only runs Linux containers, so it can't run the windows-latest job. It's still useful to show that the Linux job passes and the code itself is fine.
+- Moving or re-pushing v0.1.0 onto main's copy of that commit: rewriting a published tag breaks anyone who already fetched it, for no benefit, because the files are identical.
 
 ## Watch out
 - The aicm repo has to stay public, or the cask's download URLs fail for everyone else.
@@ -43,3 +46,8 @@ In the code:
 - .gitattributes: `* text=auto eol=lf`
 - .github/workflows/test.yml: strategy.fail-fast: false
 - act: `act push -j test --matrix os:ubuntu-latest`
+- `git describe --tags` fails on main ("No tags can describe"). Expect that until a later tag is on main; v0.1.1 and newer are.
+- Avoid rewording or rebasing commits after they've been tagged and released.
+
+- .claude/skills/release/SKILL.md step 2: git tag -l 'v*' --sort=-v:refname | head -1
+- .github/workflows/release.yml runs on v* tags; scripts/build.sh release() needs HEAD to be tagged
